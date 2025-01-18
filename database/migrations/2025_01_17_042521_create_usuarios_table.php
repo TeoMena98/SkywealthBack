@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class CreateUsuariosTable extends Migration
@@ -21,6 +22,15 @@ class CreateUsuariosTable extends Migration
             $table->string('password');
             $table->timestamps();
         });
+
+        DB::table('usuarios')->insert([
+            'nombre' => 'Admin',
+            'apellidos' => 'Sistema',
+            'email' => 'admins@test.com',
+            'password' => '$2a$12$TlDsd7s0KR50Qkzi.TnIj.vf9YzauWpdNysbyuuzLazzF2oBZH5pK', // Contraseña encriptada - 123
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     /**
