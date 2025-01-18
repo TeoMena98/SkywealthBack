@@ -67,3 +67,14 @@ Después de ejecutar las migraciones, puedes iniciar sesión con las siguientes 
 
 - **Correo electrónico**: `admins@test.com`
 - **Contraseña**: `123`
+
+
+### 8. Iniciar el servidor de desarrollo
+Finalmente, puedes iniciar el servidor de desarrollo de Laravel:
+
+```bash
+php artisan serve
+```
+
+Esto arrancará un servidor local en `http://localhost:8000`.
+
