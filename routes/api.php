@@ -23,7 +23,7 @@ Route::middleware(['jwt.auth'])->group(function () {
      * Ruta para actualizar un trabajador existente
      * Esta ruta solo puede ser accesible por usuarios autenticados
      */
-    Route::put('/trabajadores/{id}', [TrabajadorController::class, 'update']);
+    Route::post('/trabajadores/{id}', [TrabajadorController::class, 'update']);
     
     /**
      * Ruta para obtener la lista de trabajadores

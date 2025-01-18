@@ -2,10 +2,9 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Support\Facades\Auth;
+use App\Models\Trabajador;
 use App\Models\Usuario;
 use Illuminate\Http\Request;
-use Tymon\JWTAuth\Exceptions\JWTException;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 class AuthController extends Controller
@@ -13,8 +12,8 @@ class AuthController extends Controller
     /**
      * Registra un nuevo usuario.
      *
-     * Valida los datos del request, crea un nuevo usuario y guarda su información
-     * en la base de datos. Luego, retorna una respuesta de éxito.
+     * Valida los datos de entrada, crea un nuevo usuario en la base de datos
+     * y devuelve una respuesta con el mensaje de éxito.
      *
      * @param Request $request
      * @return \Illuminate\Http\JsonResponse
@@ -27,8 +26,8 @@ class AuthController extends Controller
             'apellidos' => 'required|string|max:255',
         ]);
 
-        // Creación del nuevo usuario en la base de datos
-        $user = Usuario::create([
+        // Crear el nuevo usuario y almacenarlo en la base de datos
+        Usuario::create([
             'nombre' => $request->nombre,
             'apellidos' => $request->apellidos,
             'email' => $request->email,
@@ -40,22 +39,21 @@ class AuthController extends Controller
     }
 
     /**
-     * Inicia sesión y genera un token de acceso para el usuario.
+     * Inicia sesión y genera un token JWT para el usuario.
      *
-     * Valida las credenciales proporcionadas y, si son correctas, genera un token
-     * JWT para autenticar al usuario. Si las credenciales son incorrectas o
-     * ocurre un error al generar el token, se devuelve una respuesta con un error.
+     * Valida las credenciales, genera un token JWT y devuelve la información
+     * del usuario junto con el token. En caso de error, se devuelve una respuesta de error.
      *
      * @param Request $request
      * @return \Illuminate\Http\JsonResponse
      */
     public function login(Request $request)
     {
-        // Validación de las credenciales (email y contraseña)
+        // Validar las credenciales de login
         $credentials = $request->only('email', 'password');
 
         try {
-            // Intentamos crear el token JWT
+            // Intentar generar el token JWT
             if (!$token = JWTAuth::attempt($credentials)) {
                 return response()->json(['error' => 'Unauthorized'], 401); // Credenciales incorrectas
             }
@@ -64,20 +62,38 @@ class AuthController extends Controller
             return response()->json(['error' => 'Could not create token'], 500);
         }
 
-        // Retornamos el token JWT
-        return response()->json(compact('token'));
+        // Obtener los detalles del trabajador
+        $user = JWTAuth::user();
+        $trabajador = Trabajador::join('puesto_trabajador', 'trabajadores.id', '=', 'puesto_trabajador.trabajador_id')
+            ->join('puestos_laborales', 'puesto_trabajador.puesto_id', '=', 'puestos_laborales.id')
+            ->join('usuarios', 'trabajadores.usuario_id', '=', 'usuarios.id')
+            ->select('trabajadores.nombre', 'puestos_laborales.nombre as puesto_nombre', 'usuarios.nombre as usuario_nombre', 'usuarios.email as usuario_email')
+            ->where('usuarios.email', '=', $user->email)
+            ->first();
+
+        // Verificar si se encontró al trabajador y su puesto
+        if (!$trabajador) {
+            return response()->json(['error' => 'Trabajador o puesto no encontrado'], 404);
+        }
+
+        // Retornar el token y la información adicional del usuario
+        return response()->json([
+            'token' => $token,
+            'usuario_nombre' => $trabajador->usuario_nombre,
+            'puesto_nombre' => $trabajador->puesto_nombre,
+        ]);
     }
 
     /**
      * Cierra la sesión del usuario actual.
      *
-     * Revoca el token de acceso y cierra la sesión del usuario.
+     * Revoca el token JWT y finaliza la sesión del usuario.
      *
      * @return \Illuminate\Http\JsonResponse
      */
     public function logout()
     {
-        // Cierre de sesión
+        // Revocar el token de autenticación
         auth()->logout();
 
         // Respuesta de éxito
@@ -85,9 +101,9 @@ class AuthController extends Controller
     }
 
     /**
-     * Refresca el token de acceso.
+     * Refresca el token de acceso del usuario.
      *
-     * Si el token actual está cerca de su expiración, se genera uno nuevo.
+     * Genera un nuevo token si el token actual está cerca de su expiración.
      *
      * @return \Illuminate\Http\JsonResponse
      */
@@ -99,7 +115,7 @@ class AuthController extends Controller
     /**
      * Obtiene el perfil del usuario autenticado.
      *
-     * Devuelve los datos del usuario que está actualmente autenticado.
+     * Devuelve los datos del usuario actualmente autenticado.
      *
      * @return \Illuminate\Http\JsonResponse
      */
@@ -117,9 +133,9 @@ class AuthController extends Controller
     protected function respondWithToken($token)
     {
         return response()->json([
-            'access_token' => $token,   // Token generado
-            'token_type' => 'bearer',    // Tipo de token (Bearer)
-            'expires_in' => auth()->factory()->getTTL() * 60 // Tiempo de expiración en segundos
+            'access_token' => $token,  // Token generado
+            'token_type' => 'bearer',   // Tipo de token
+            'expires_in' => auth()->factory()->getTTL() * 60 // Expiración en segundos
         ]);
     }
 }

@@ -6,9 +6,9 @@ use App\Models\PuestoLaboral;
 use App\Models\Trabajador;
 use App\Models\Usuario;
 use Exception;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class TrabajadorController extends Controller
@@ -32,30 +32,33 @@ class TrabajadorController extends Controller
                 'dni' => 'required|string|max:20',
                 'fecha_nacimiento' => 'required|date',
                 'foto' => 'nullable|file|mimes:jpg,jpeg,png|max:2048',
-                'puesto_laboral' => 'required|exists:puestos_laborales,id',
+                'puesto_laboral' => 'required|array',
+                'puesto_laboral.*' => 'exists:puestos_laborales,id',
             ]);
 
-            // Buscar si el trabajador ya existe por DNI
+            // Verificar si el trabajador ya existe por DNI
             $trabajador = Trabajador::where('dni', $validated['dni'])->first();
 
             if ($trabajador) {
-                // Verificar si el puesto laboral ya está asignado al trabajador
-                $puestoExistente = DB::table('puesto_trabajador')
-                    ->where('trabajador_id', $trabajador->id)
-                    ->where('puesto_id', $validated['puesto_laboral'])
-                    ->exists();
+                // Verificar si alguno de los puestos laborales ya está asignado al trabajador
+                foreach ($validated['puesto_laboral'] as $puesto_id) {
+                    $puestoExistente = DB::table('puesto_trabajador')
+                        ->where('trabajador_id', $trabajador->id)
+                        ->where('puesto_id', $puesto_id)
+                        ->exists();
 
-                if ($puestoExistente) {
-                    return response()->json([
-                        'message' => 'Este puesto ya está asignado al trabajador.',
-                    ], 200);
+                    if ($puestoExistente) {
+                        return response()->json([
+                            'message' => 'Uno de los puestos ya está asignado al trabajador.',
+                        ], 200);
+                    }
                 }
 
-                // Asignar el puesto laboral si no está asignado
+                // Asignar los puestos laborales si no están asignados
                 $trabajador->puestosLaborales()->attach($validated['puesto_laboral']);
 
                 return response()->json([
-                    'message' => 'Puesto laboral asignado al trabajador correctamente.',
+                    'message' => 'Puestos laborales asignados al trabajador correctamente.',
                     'data' => $trabajador,
                 ], 200);
             }
@@ -81,7 +84,7 @@ class TrabajadorController extends Controller
                 'usuario_id' => $usuario->id,
             ]);
 
-            // Asociar el puesto laboral al trabajador
+            // Asociar los puestos laborales al trabajador
             $trabajador->puestosLaborales()->attach($validated['puesto_laboral']);
 
             return response()->json([
@@ -119,14 +122,44 @@ class TrabajadorController extends Controller
             return response()->json(['message' => 'Trabajador no encontrado'], 404);
         }
 
-        // Actualizar los campos del trabajador
-        $trabajador->nombre = $request->input('nombre');
-        $trabajador->apellidos = $request->input('apellidos');
-        $trabajador->dni = $request->input('dni');
-        $trabajador->fecha_nacimiento = $request->input('fecha_nacimiento');
-        
-        // Asociar puesto laboral
-        $trabajador->puestosLaborales()->attach($request->input('puesto_laboral'));
+        // Validaciones y actualización de los campos
+        $updated = false;
+
+        // Si el nombre es diferente, actualiza
+        if ($trabajador->nombre !== $request->input('nombre')) {
+            $trabajador->nombre = $request->input('nombre');
+            $updated = true;
+        }
+
+        // Si los apellidos son diferentes, actualiza
+        if ($trabajador->apellidos !== $request->input('apellidos')) {
+            $trabajador->apellidos = $request->input('apellidos');
+            $updated = true;
+        }
+
+        // Si la fecha de nacimiento es diferente, actualiza
+        if ($trabajador->fecha_nacimiento !== $request->input('fecha_nacimiento')) {
+            $trabajador->fecha_nacimiento = $request->input('fecha_nacimiento');
+            $updated = true;
+        }
+
+        // Si se cambiaron el nombre o apellidos, verificar si ya existe un trabajador con el mismo nombre y apellido
+        if ($updated) {
+            $existingTrabajador = Trabajador::where('nombre', $trabajador->nombre)
+                ->where('apellidos', $trabajador->apellidos)
+                ->first();
+
+            if ($existingTrabajador) {
+                // Si existe, generar un email único
+                $email = $this->generarEmailUnico($trabajador->nombre, $trabajador->apellidos);
+                $trabajador->email = $email;  // Asignar el email único al trabajador
+            }
+        }
+
+        // Asociar puesto laboral si es proporcionado
+        if ($request->has('puesto_laboral')) {
+            $trabajador->puestosLaborales()->sync($request->input('puesto_laboral'));
+        }
 
         // Subir foto si se proporciona
         if ($request->hasFile('foto')) {
@@ -170,15 +203,35 @@ class TrabajadorController extends Controller
      * Obtiene todos los trabajadores.
      *
      * Recupera y devuelve una lista de todos los trabajadores registrados
-     * en la base de datos.
+     * en la base de datos, junto con sus puestos laborales.
      *
      * @return \Illuminate\Http\JsonResponse
      */
     public function Trabajadores()
     {
         try {
-            // Recuperar todos los trabajadores
-            $trabajadores = Trabajador::all();
+            $trabajadores = Trabajador::join('puesto_trabajador', 'trabajadores.id', '=', 'puesto_trabajador.trabajador_id')
+                ->join('puestos_laborales', 'puesto_trabajador.puesto_id', '=', 'puestos_laborales.id')
+                ->join('usuarios', 'trabajadores.usuario_id', '=', 'usuarios.id')
+                ->select('trabajadores.*', 'puesto_trabajador.puesto_id', 'puestos_laborales.nombre as puesto_nombre', 'usuarios.nombre as usuario_nombre', 'usuarios.email as usuario_email')
+                ->get()
+                ->groupBy('id');
+
+            // Agrupar y combinar los puestos laborales en una sola entrada por trabajador
+            $trabajadores = $trabajadores->map(function ($trabajador) {
+                // Obtener los nombres de los puestos como una cadena
+                $puestosNombres = $trabajador->pluck('puesto_nombre')->join(', ');
+
+                // Obtener los IDs de los puestos como un array
+                $puestosId = $trabajador->pluck('puesto_id')->toArray();
+
+                // Asignar las cadenas combinadas de puestos al trabajador
+                $trabajador[0]->puestos = $puestosNombres;
+                $trabajador[0]->puestosId = $puestosId;
+
+                // Devolver el primer trabajador con los puestos agregados
+                return $trabajador[0];
+            });
 
             return response()->json([
                 'success' => true,
